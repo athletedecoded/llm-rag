@@ -1,13 +1,10 @@
-use actix_web::{web, App, HttpServer};
 use env_logger::Env;
+use polodb_core::{Collection, Database, Error};
 use serde::{Deserialize, Serialize};
-use polodb_core::{Database, Error, Collection};
+use tokenizers::tokenizer::{Result, Tokenizer};
+use actix_web::{web, App, HttpServer};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Context {
-    chunk: String,
-    embedding: Vec<f64>, // Change the type to store the embedding as a vector of floats
-}
+use llm_rag::{Context};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -21,8 +18,10 @@ async fn main() -> std::io::Result<()> {
     let collection: Collection<Context> = db.collection("context");
     let chunks = collection.find(None).unwrap();
     for chunk in chunks {
-        println!("item: {:?}", chunk);
+        println!("item: {:?}", chunk.unwrap().embedding);
     }
+    // Init tokenizer
+    let tokenizer = Tokenizer::from_file("tokenizers/phi.json").unwrap();
 
     // Launch service
     HttpServer::new(|| {
