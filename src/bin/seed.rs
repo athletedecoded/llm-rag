@@ -3,9 +3,9 @@ use polodb_core::{Collection, Database};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokenizers::tokenizer::{Result, Tokenizer};
-use llm_rag::{chunk_text, create_context};
-
-use llm_rag::Context;
+use tokenizers::utils::truncation::{TruncationParams, TruncationStrategy};
+use tokenizers::utils::padding::{PaddingStrategy, PaddingDirection, PaddingParams};
+use llm_rag::{Context, chunk_text, create_context};
 
 // Seed db with corpus embeddings
 fn main() -> Result<()> {
@@ -13,6 +13,7 @@ fn main() -> Result<()> {
     dotenv::dotenv().ok();
     let db_pth = dotenv::var("DB_PTH").expect("ERROR: Invalid DB_PTH");
     let corpus_pth = dotenv::var("CORPUS_PTH").expect("ERROR: Invalid CORPUS_PTH");
+    let tokenizer_pth = dotenv::var("TOKENIZER_PTH").expect("ERROR: Invalid TOKENIZER_PTH");
     // Start with fresh db
     if fs::metadata(&db_pth).is_ok() {
         // Delete existing db file if exists
@@ -26,7 +27,19 @@ fn main() -> Result<()> {
     let collection: Collection<Context> = db.collection("context");
     println!("Success: New db created.");
     // Init tokenizer
-    let tokenizer = Tokenizer::from_file("tokenizers/phi.json")?;
+    let mut tokenizer = Tokenizer::from_file(&tokenizer_pth)?;
+    let padding_params = PaddingParams {
+        strategy: PaddingStrategy::Fixed(60),
+        // direction: PaddingDirection::Right,
+        ..Default::default()
+    };
+    let truncation_params = TruncationParams {
+        max_length: 60,
+        strategy: TruncationStrategy::LongestFirst,
+        stride: 0,
+        ..Default::default()
+    };
+    tokenizer.with_padding(Some(padding_params)).with_truncation(Some(truncation_params));
     // Scan corpus
     println!("Scanning corpus...");
     let docs: Vec<_> = fs::read_dir(corpus_pth)?
@@ -53,13 +66,10 @@ fn main() -> Result<()> {
         for chunk in chunks {
             match create_context(&tokenizer, chunk) {
                 Ok(context) => {
-                    // Insert into DB
                     let resp = collection.insert_one(context);
-                    // Handle resp if needed
                 }
                 Err(err) => {
                     eprintln!("Error creating context: {:?}", err);
-                    // Handle the error as needed
                 }
             }
         }
