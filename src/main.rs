@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::process::Command;
 use env_logger::Env;
 use polodb_core::{Collection, Database};
 use tokenizers::tokenizer::Tokenizer;
@@ -8,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use axum::{Router, routing::get, extract::State};
 
-use llm_rag::{Context, Query, Resp, AppState, build_rag_matrix};
+use llm_rag::{Context, RagQuery, RagResp, AppState, build_rag_matrix};
 #[tokio::main]
 async fn main() {
     // Initialize logger
