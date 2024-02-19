@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     let db_pth = dotenv::var("DB_PTH").expect("ERROR: Invalid DB_PTH");
     let corpus_pth = dotenv::var("CORPUS_PTH").expect("ERROR: Invalid CORPUS_PTH");
     let tokenizer_pth = dotenv::var("TOKENIZER_PTH").expect("ERROR: Invalid TOKENIZER_PTH");
-    let context_window = dotenv::var("CONTEXT_WINDOW").expect("ERROR: Invalid CONTEXT_WINDOW");
+    let context_window = dotenv::var("CONTEXT_WINDOW").expect("ERROR: Invalid CONTEXT_WINDOW").parse::<usize>().unwrap();
     // Start with fresh db
     if fs::metadata(&db_pth).is_ok() {
         // Delete existing db file if exists
@@ -30,12 +30,11 @@ fn main() -> Result<()> {
     // Init tokenizer
     let mut tokenizer = Tokenizer::from_file(&tokenizer_pth)?;
     let padding_params = PaddingParams {
-        strategy: PaddingStrategy::Fixed(60),
-        // direction: PaddingDirection::Right,
+        strategy: PaddingStrategy::Fixed(context_window),
         ..Default::default()
     };
     let truncation_params = TruncationParams {
-        max_length: 60,
+        max_length: context_window,
         strategy: TruncationStrategy::LongestFirst,
         stride: 0,
         ..Default::default()

@@ -16,4 +16,5 @@ tokenizers = "0.15.2"
 serde_json = "1.0"
 dotenv = "0.15"
 ndarray = "0.15.6"
+ndarray-stats = "0.5.1"
 
