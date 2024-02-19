@@ -8,7 +8,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use axum::{Router, routing::get, extract::State};
 
-use llm_rag::{Context, Query, Resp, AppState};
+use llm_rag::{Context, Query, Resp, AppState, build_embedding_matrix};
 #[tokio::main]
 async fn main() {
     // Initialize logger
@@ -17,6 +17,7 @@ async fn main() {
     dotenv::dotenv().ok();
     let db_pth = dotenv::var("DB_PTH").expect("ERROR: Invalid DB_PTH");
     let tokenizer_pth = dotenv::var("TOKENIZER_PTH").expect("ERROR: Invalid TOKENIZER_PTH");
+    let context_window = dotenv::var("CONTEXT_WINDOW").expect("ERROR: Invalid CONTEXT_WINDOW");
     // Init DB
     let db = Database::open_file(&db_pth).unwrap();
     let collection: Collection<Context> = db.collection("context");
@@ -33,7 +34,9 @@ async fn main() {
         stride: 0,
         ..Default::default()
     };
-    tokenizer.with_padding(Some(padding_params)).with_truncation(Some(truncation_params));
+    let _ = tokenizer.with_padding(Some(padding_params)).with_truncation(Some(truncation_params));
+    // Build RAG matrix
+    let rag_matrix = build_embedding_matrix(&collection);
     // Init app state
     let app_state = Arc::new(AppState{tokenizer, collection});
     // Build app routes

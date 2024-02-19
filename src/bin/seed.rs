@@ -14,6 +14,7 @@ fn main() -> Result<()> {
     let db_pth = dotenv::var("DB_PTH").expect("ERROR: Invalid DB_PTH");
     let corpus_pth = dotenv::var("CORPUS_PTH").expect("ERROR: Invalid CORPUS_PTH");
     let tokenizer_pth = dotenv::var("TOKENIZER_PTH").expect("ERROR: Invalid TOKENIZER_PTH");
+    let context_window = dotenv::var("CONTEXT_WINDOW").expect("ERROR: Invalid CONTEXT_WINDOW");
     // Start with fresh db
     if fs::metadata(&db_pth).is_ok() {
         // Delete existing db file if exists
@@ -39,7 +40,7 @@ fn main() -> Result<()> {
         stride: 0,
         ..Default::default()
     };
-    tokenizer.with_padding(Some(padding_params)).with_truncation(Some(truncation_params));
+    let _ = tokenizer.with_padding(Some(padding_params)).with_truncation(Some(truncation_params));
     // Scan corpus
     println!("Scanning corpus...");
     let docs: Vec<_> = fs::read_dir(corpus_pth)?
