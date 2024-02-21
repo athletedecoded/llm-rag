@@ -1,15 +1,14 @@
-use std::sync::Arc;
-use serde_json::json;
-use ollama_rs::Ollama;
-use tokio::sync::Mutex;
-use ndarray_linalg::norm::{normalize, NormalizeAxis};
+use axum::{extract::State, http::StatusCode, response::Html, Json};
+use ndarray::{s, Array, ArrayBase, Axis, Dim, OwnedRepr};
+use ndarray_linalg::norm::{normalize, Norm, NormalizeAxis};
 use ndarray_stats::QuantileExt;
-use serde::{Deserialize, Serialize};
-use polodb_core::{Collection, Database};
-use tokenizers::tokenizer::{Result, Tokenizer};
-use ndarray::{Array, Axis, ArrayView, ArrayBase, Dim, OwnedRepr};
-use axum::{http::StatusCode, Json, Router, response::Html, routing::get, extract::State};
 use ollama_rs::generation::completion::request::GenerationRequest;
+use ollama_rs::Ollama;
+use polodb_core::Collection;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use regex::Regex;
+use tokenizers::tokenizer::{Result, Tokenizer};
 
 // STRUCTS
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,38 +29,48 @@ pub struct RagResp {
 
 pub struct AppState {
     pub tokenizer: Tokenizer,
-    pub rag_matrix: ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>
+    pub model: String,
+    pub rag_matrix: ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>,
 }
 
 // HELPER FXNS
-pub fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
-    let sentences: Vec<&str> = text.split_terminator(|c| c == '.' || c == '?' || c == '!').collect();
-
+pub fn chunk_text(tokenizer_pth: &str, text: &str, max_tokens: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current_chunk = String::new();
-    let mut current_word_count = 0;
+    let mut current_token_count = 0;
+
+    // Preprocess
+    let cleaned_text = text.replace("\n", " ").replace("\r", " ");
+    let sentences: Vec<&str> = cleaned_text
+        .split_terminator(|c| c == '.' || c == '?' || c == '!')
+        .collect();
+
+    let tokenizer = Tokenizer::from_file(&tokenizer_pth).unwrap();
 
     for sentence in sentences {
-        let words: Vec<&str> = sentence.split_whitespace().collect();
-        let sentence_word_count = words.len();
-
-        if current_word_count + sentence_word_count > max_words && !current_chunk.is_empty() {
+        let encoding = tokenizer.encode(sentence, false).unwrap();
+        let num_tokens = encoding.get_tokens().to_vec().len();
+        // Skip cases where the number of tokens is zero
+        if num_tokens == 0 {
+            continue;
+        }
+        // If adding sentence will exceed max tokens, start fresh chunk
+        if current_token_count + num_tokens > max_tokens {
             chunks.push(current_chunk.clone());
             current_chunk.clear();
-            current_word_count = 0;
+            current_token_count = 0;
         }
-
+        // Add sentence to chunk
         if !current_chunk.is_empty() {
+            // If current chunk not empty add a space
             current_chunk.push_str(" ");
         }
         current_chunk.push_str(sentence.trim());
-        current_word_count += sentence_word_count;
+        current_chunk.push_str(".");
+        // Increment token count
+        current_token_count += num_tokens + 1;
     }
-
-    if !current_chunk.is_empty() {
-        chunks.push(current_chunk);
-    }
-
+    // Return chunks
     chunks
 }
 
@@ -72,12 +81,15 @@ pub fn create_context(tokenizer: &Tokenizer, text: String) -> Result<Context> {
     let context = Context {
         text,
         tokens,
-        embedding
+        embedding,
     };
     Ok(context)
 }
 
-pub fn build_rag_matrix(collection: &Collection<Context>, context_window: usize) -> ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>{
+pub fn build_rag_matrix(
+    collection: &Collection<Context>,
+    context_window: usize,
+) -> ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>> {
     println!("Building RAG matrix...");
     let mut rag_matrix = Array::zeros((0, context_window));
     let entries = collection.find(None).unwrap();
@@ -85,6 +97,7 @@ pub fn build_rag_matrix(collection: &Collection<Context>, context_window: usize)
         let embedding = Array::from_vec(entry.unwrap().embedding);
         let _ = rag_matrix.push(Axis(0), (&embedding).into());
     }
+    println!("RAG matrix shape: {:?}", rag_matrix.shape());
     rag_matrix
 }
 
@@ -93,19 +106,45 @@ fn normalize_embedding(raw_embedding: Vec<u32>) -> ArrayBase<OwnedRepr<f32>, Dim
     let f32_vec: Vec<f32> = raw_embedding.iter().map(|&x| x as f32).collect();
     let mut embedding = Array::from_vec(f32_vec);
     // L2 norm
-    let norm = embedding.iter().fold(0.0, |acc, &x| acc + x * x).sqrt();
+    let norm = embedding.norm_l2();
+    if norm == 0.0 {
+        return embedding;
+    }
+    // Normalize the embedding
     embedding.mapv_inplace(|x| x / norm);
+
+    // Validate normalized vector length
+    // let length = (embedding.mapv(|x| x.powi(2)).sum()).sqrt();
+    // println!("Normalized Vector Length: {}", length);
 
     embedding
 }
 
-fn normalize_matrix(matrix: &ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>) -> ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>> {
+fn normalize_matrix(
+    matrix: &ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>,
+) -> ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>> {
     // Convert u32 to f32 for normalization
     let f32_matrix: ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>> = matrix.map(|&x| x as f32);
     // L2 Norm
     let (norm_matrix, _) = normalize(f32_matrix, NormalizeAxis::Row);
 
+    // Validate the length of the normalized vector for each row
+    // for i in 0..norm_matrix.shape()[0] {
+    //     let row_length = (norm_matrix.slice(s![i, ..]).mapv(|x| x.powi(2)).sum()).sqrt();
+    //     println!("Length of normalized vector for row {}: {}", i, row_length);
+    // }
+
     norm_matrix
+}
+
+fn cosine_similarity(
+    raw_embedding: Vec<u32>, rag_matrix: &ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>
+    ) -> ArrayBase<OwnedRepr<f32>, Dim<[usize; 1]>> {
+    // Normalize
+    let prompt_norm = normalize_embedding(raw_embedding);
+    let rag_norm = normalize_matrix(rag_matrix);
+    // cosine similarity: dot product or normalized vectors
+    rag_norm.dot(&prompt_norm)
 }
 
 // ROUTES
@@ -115,49 +154,46 @@ pub async fn index() -> Html<&'static str> {
 }
 
 // GET /query
-pub async fn query_handler(State(state): State<Arc<AppState>>, Json(payload): Json<RagQuery>) -> (StatusCode, Json<RagResp>) {
+pub async fn query_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RagQuery>,
+) -> (StatusCode, Json<RagResp>) {
     let prompt = payload.prompt;
     println!("Prompt: {:?}", prompt);
+    // Extract AppState
     let tokenizer = &state.tokenizer;
+    let model = &state.model;
     let rag_matrix = &state.rag_matrix; // N x context_window
-    println!("RAG Matrix shape: {:?}", rag_matrix.shape());
     // Prompt embedding
     let prompt_encoding = tokenizer.encode(prompt.clone(), false).unwrap();
-    let prompt_tokens = prompt_encoding.get_tokens().to_vec();
     let raw_embedding = prompt_encoding.get_ids().to_vec();
-    // let prompt_embedding = Array::from_vec(raw_embedding); // 1 x context_window
-    // Normalize
-    let prompt_norm = normalize_embedding(raw_embedding);
-    let rag_norm = normalize_matrix(rag_matrix);
-    // Similarity
-    let similarities = rag_norm.dot(&prompt_norm); // N x 1
-    println!("Similarities: {:?}", similarities);
+    println!("Prompt embedding length: {:?}", raw_embedding.len());
+    // Cosine Similarity
+    let similarities = cosine_similarity(raw_embedding, &rag_matrix);
     // Find most similar RAG entry
     let max_index = similarities.argmax().unwrap();
-    let max_vector = rag_matrix.index_axis(Axis(0), max_index);
-    // Decode
-    let decoded = tokenizer.decode(max_vector.to_slice().unwrap(), true).unwrap();
-    println!("Text with highest similarity: {:?}", &decoded);
+    let rag_match = rag_matrix.index_axis(Axis(0), max_index);
+    // Extract context
+    let context = tokenizer
+        .decode(rag_match.to_slice().unwrap(), true)
+        .unwrap();
+    println!("Context: {:?}", &context);
     // Query LLM
-    let query_string = format!("Generate a response to the following question. Use the provided context only if it is useful. \n Question: {} \n Context: {}.", &prompt, &decoded);
-    println!("Query string: {:?}", &query_string);
+    let query_string = format!("Generate a response to the following question. Use the provided context only if it is useful. \n Question: {} \n Context: {}.", &prompt, &context);
     let ollama = Ollama::default();
-    let model = "mistral:latest".to_string();
-    let res = ollama.generate(GenerationRequest::new(model, query_string)).await;
+    let res = ollama
+        .generate(GenerationRequest::new(model.to_string(), query_string))
+        .await;
     match res {
         // 200 OK
         Ok(res) => {
             println!("Response: {:?}", res.response);
-            (StatusCode::OK, Json(RagResp {
-                body: res.response
-            }))
+            (StatusCode::OK, Json(RagResp { body: res.response }))
         }
         // 500 Error
         Err(e) => {
             println!("Error: {:?}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(RagResp {
-                body: e
-            }))
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(RagResp { body: e }))
         }
     }
 }
