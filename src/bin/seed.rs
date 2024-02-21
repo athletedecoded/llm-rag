@@ -61,7 +61,7 @@ fn main() -> Result<()> {
     docs.par_iter().for_each(|file_path| {
         // Chunk the file content
         let content = fs::read_to_string(&file_path).unwrap();
-        let chunks = chunk_text(&content);
+        let chunks = chunk_text(&content, context_window);
         // Embed and insert into DB
         for chunk in chunks {
             match create_context(&tokenizer, chunk) {

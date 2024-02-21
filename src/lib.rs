@@ -2,6 +2,7 @@ use std::sync::Arc;
 use serde_json::json;
 use ollama_rs::Ollama;
 use tokio::sync::Mutex;
+use ndarray_linalg::norm::{normalize, NormalizeAxis};
 use ndarray_stats::QuantileExt;
 use serde::{Deserialize, Serialize};
 use polodb_core::{Collection, Database};
@@ -33,28 +34,48 @@ pub struct AppState {
 }
 
 // HELPER FXNS
-pub fn chunk_text(text: &str) -> Vec<&str> {
-    text.split("\n").collect()
+pub fn chunk_text(text: &str, max_words: usize) -> Vec<String> {
+    let sentences: Vec<&str> = text.split_terminator(|c| c == '.' || c == '?' || c == '!').collect();
+
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+    let mut current_word_count = 0;
+
+    for sentence in sentences {
+        let words: Vec<&str> = sentence.split_whitespace().collect();
+        let sentence_word_count = words.len();
+
+        if current_word_count + sentence_word_count > max_words && !current_chunk.is_empty() {
+            chunks.push(current_chunk.clone());
+            current_chunk.clear();
+            current_word_count = 0;
+        }
+
+        if !current_chunk.is_empty() {
+            current_chunk.push_str(" ");
+        }
+        current_chunk.push_str(sentence.trim());
+        current_word_count += sentence_word_count;
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    chunks
 }
 
-pub fn create_context(tokenizer: &Tokenizer, text: &str) -> Result<Context> {
-    let encoding = tokenizer.encode(text, false)?;
+pub fn create_context(tokenizer: &Tokenizer, text: String) -> Result<Context> {
+    let encoding = tokenizer.encode(text.clone(), false)?;
     let tokens = encoding.get_tokens().to_vec();
     let embedding = encoding.get_ids().to_vec();
-    // let embedding = encoding.get_ids().iter().map(|&x| x as f64).collect();
     let context = Context {
-        text: text.to_string(),
+        text,
         tokens,
         embedding
     };
     Ok(context)
 }
-
-// pub fn normalize_embedding(raw_embedding: Vec<f64>) -> ArrayBase<OwnedRepr<f64>, Dim<[usize; 1]>> {
-//     let embedding = Array::from_vec(raw_embedding);
-//     let norm = embedding.iter().fold(0.0, |acc, &x| acc + x * x).sqrt();
-//     embedding.mapv(|x| x / norm)
-// }
 
 pub fn build_rag_matrix(collection: &Collection<Context>, context_window: usize) -> ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>{
     println!("Building RAG matrix...");
@@ -67,12 +88,28 @@ pub fn build_rag_matrix(collection: &Collection<Context>, context_window: usize)
     rag_matrix
 }
 
+fn normalize_embedding(raw_embedding: Vec<u32>) -> ArrayBase<OwnedRepr<f32>, Dim<[usize; 1]>> {
+    // Convert u32 to f32 for normalization
+    let f32_vec: Vec<f32> = raw_embedding.iter().map(|&x| x as f32).collect();
+    let mut embedding = Array::from_vec(f32_vec);
+    // L2 norm
+    let norm = embedding.iter().fold(0.0, |acc, &x| acc + x * x).sqrt();
+    embedding.mapv_inplace(|x| x / norm);
+
+    embedding
+}
+
+fn normalize_matrix(matrix: &ArrayBase<OwnedRepr<u32>, Dim<[usize; 2]>>) -> ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>> {
+    // Convert u32 to f32 for normalization
+    let f32_matrix: ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>> = matrix.map(|&x| x as f32);
+    // L2 Norm
+    let (norm_matrix, _) = normalize(f32_matrix, NormalizeAxis::Row);
+
+    norm_matrix
+}
+
 // ROUTES
 // GET /
-// pub async fn root() -> &'static str {
-//     "Rusty RAG Application Launched!"
-// }
-// Include utf-8 file at **compile** time.
 pub async fn index() -> Html<&'static str> {
     Html(std::include_str!("index.html"))
 }
@@ -88,9 +125,12 @@ pub async fn query_handler(State(state): State<Arc<AppState>>, Json(payload): Js
     let prompt_encoding = tokenizer.encode(prompt.clone(), false).unwrap();
     let prompt_tokens = prompt_encoding.get_tokens().to_vec();
     let raw_embedding = prompt_encoding.get_ids().to_vec();
-    let prompt_embedding = Array::from_vec(raw_embedding); // 1 x context_window
+    // let prompt_embedding = Array::from_vec(raw_embedding); // 1 x context_window
+    // Normalize
+    let prompt_norm = normalize_embedding(raw_embedding);
+    let rag_norm = normalize_matrix(rag_matrix);
     // Similarity
-    let similarities = rag_matrix.dot(&prompt_embedding); // N x 1
+    let similarities = rag_norm.dot(&prompt_norm); // N x 1
     println!("Similarities: {:?}", similarities);
     // Find most similar RAG entry
     let max_index = similarities.argmax().unwrap();
