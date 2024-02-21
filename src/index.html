@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rusty RAG</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 20px;
+            padding: 0;
+            background-color: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        #chat-container {
+            width: 80%;
+            max-width: 600px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        #chat-header {
+            background-color: #4caf50;
+            color: #fff;
+            padding: 15px;
+            text-align: center;
+            font-size: 20px;
+        }
+
+        #chat-input-container {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        #promptInput {
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            overflow-y: auto;
+            resize: vertical;
+        }
+
+        #send-button {
+            padding: 10px;
+            background-color: #4caf50;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        #response-container {
+            padding: 20px;
+            overflow: hidden; /* Hide the vertical scrollbar */
+            white-space: pre-wrap;
+            text-align: center;
+        }
+
+        #response {
+            color: #333;
+        }
+
+        .lds-ellipsis {
+            display: none;
+            position: relative;
+            width: 80px;
+            height: 80px;
+        }
+        .lds-ellipsis div {
+            position: absolute;
+            top: 33px;
+            width: 13px;
+            height: 13px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation-timing-function: cubic-bezier(0, 1, 1, 0);
+        }
+        .lds-ellipsis div:nth-child(1) {
+            left: 8px;
+            animation: lds-ellipsis1 0.6s infinite;
+        }
+        .lds-ellipsis div:nth-child(2) {
+            left: 8px;
+            animation: lds-ellipsis2 0.6s infinite;
+        }
+        .lds-ellipsis div:nth-child(3) {
+            left: 32px;
+            animation: lds-ellipsis2 0.6s infinite;
+        }
+        .lds-ellipsis div:nth-child(4) {
+            left: 56px;
+            animation: lds-ellipsis3 0.6s infinite;
+        }
+        @keyframes lds-ellipsis1 {
+            0% {
+                transform: scale(0);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        @keyframes lds-ellipsis3 {
+            0% {
+                transform: scale(1);
+            }
+            100% {
+                transform: scale(0);
+            }
+        }
+        @keyframes lds-ellipsis2 {
+            0% {
+                transform: translate(0, 0);
+            }
+            100% {
+                transform: translate(24px, 0);
+            }
+        }
+
+    </style>
+</head>
+<body>
+
+<div id="chat-container">
+    <div id="chat-header">Rusty RAG</div>
+
+    <div id="chat-input-container">
+        <label for="promptInput">Enter Prompt:</label>
+        <textarea id="promptInput" placeholder="Type your prompt here"></textarea>
+        <button onclick="sendQuery()" id="send-button">Submit</button>
+    </div>
+
+    <div id="response-container">
+        <div id="loading-indicator" class="lds-ellipsis"><div></div><div></div><div></div><div></div></div>
+        <div id="response"></div>
+    </div>
+</div>
+
+<script>
+    function sendQuery() {
+        console.log("sendQuery called");
+        const userInput = document.getElementById("promptInput").value;
+        const requestData = { prompt: userInput };
+
+        document.getElementById("response").innerHTML = "";
+        document.getElementById("loading-indicator").style.display = "inline-block";
+
+        fetch('http://127.0.0.1:8000/query', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestData),
+        })
+            .then(response => response.json())
+            .then(data => {
+                console.log("Response received:", data);
+                document.getElementById("response").innerHTML = data.body;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            })
+            .finally(() => {
+                document.getElementById("loading-indicator").style.display = "none";
+            });
+    }
+</script>
+
+</body>
+</html>

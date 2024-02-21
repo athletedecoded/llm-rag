@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use polodb_core::{Collection, Database};
 use tokenizers::tokenizer::{Result, Tokenizer};
 use ndarray::{Array, Axis, ArrayView, ArrayBase, Dim, OwnedRepr};
-use axum::{http::StatusCode,Json,Router, routing::get, extract::State};
+use axum::{http::StatusCode, Json, Router, response::Html, routing::get, extract::State};
 use ollama_rs::generation::completion::request::GenerationRequest;
 
 // STRUCTS
@@ -69,8 +69,12 @@ pub fn build_rag_matrix(collection: &Collection<Context>, context_window: usize)
 
 // ROUTES
 // GET /
-pub async fn root() -> &'static str {
-    "Rusty RAG Application Launched!"
+// pub async fn root() -> &'static str {
+//     "Rusty RAG Application Launched!"
+// }
+// Include utf-8 file at **compile** time.
+pub async fn index() -> Html<&'static str> {
+    Html(std::include_str!("index.html"))
 }
 
 // GET /query

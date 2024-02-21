@@ -1,2 +1,5 @@
-# llm-rag
-LLM w/ RAG from scratch using Rust
+# Rusty RAG
+LLM w/ RAG from scratch using Rust & Ollama
+
+##
+

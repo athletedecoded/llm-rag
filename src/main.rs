@@ -7,7 +7,7 @@ use tokenizers::utils::truncation::{TruncationParams, TruncationStrategy};
 use tokenizers::utils::padding::{PaddingParams, PaddingStrategy, PaddingDirection};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use axum::{Router, routing::get, extract::State};
+use axum::{Router, routing::{get, post}, extract::State};
 
 use llm_rag::{Context, RagQuery, RagResp, AppState, build_rag_matrix};
 #[tokio::main]
@@ -42,8 +42,8 @@ async fn main() {
     let app_state = Arc::new(AppState{tokenizer, rag_matrix});
     // Build app routes
     let app = Router::new()
-        .route("/", get(llm_rag::root))
-        .route("/query", get(llm_rag::query_handler))
+        .route("/", get(llm_rag::index))
+        .route("/query", post(llm_rag::query_handler))
         .with_state(app_state);
     // Launch
     let listener = TcpListener::bind("127.0.0.1:8000")
