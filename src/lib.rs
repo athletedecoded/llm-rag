@@ -167,7 +167,6 @@ pub async fn query_handler(
     // Prompt embedding
     let prompt_encoding = tokenizer.encode(prompt.clone(), false).unwrap();
     let raw_embedding = prompt_encoding.get_ids().to_vec();
-    println!("Prompt embedding length: {:?}", raw_embedding.len());
     // Cosine Similarity
     let similarities = cosine_similarity(raw_embedding, &rag_matrix);
     // Find most similar RAG entry
